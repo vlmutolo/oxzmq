@@ -17,7 +17,7 @@ This project is licensed under the MPL, Version 2. I chose the MPL in spite of t
 Reasons I chose the MPL:
 
 - It ensures that all changes made to downstream forks can be reintegrated into the project.
-- It isn't viral in the sense that you can license "larger works" under an arbitrary license.
+- It isn't viral—you can license "larger works" under an arbitrary license.
 - I was swayed by the arguments Peter Hintjens made in the [ZeroMQ guide][zmq-guide].
 
 [virality]: https://www.mozilla.org/en-US/MPL/2.0/FAQ/#virality
