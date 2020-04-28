@@ -19,6 +19,21 @@ Reasons I chose the MPL:
 - It ensures that all changes made to downstream forks can be reintegrated into the project.
 - It isn't viral—you can license "larger works" under an arbitrary license.
 - I was swayed by the arguments Peter Hintjens made in the [ZeroMQ guide][zmq-guide].
+- The ZeroMQ project generally intends to move to the MPL and [recommends it for all new projects][zmq-mpl].
 
 [virality]: https://www.mozilla.org/en-US/MPL/2.0/FAQ/#virality
+[zmq-guide]: http://zguide.zeromq.org/page:all#Chapter-The-ZeroMQ-Community
+[zmq-mpl]: http://wiki.zeromq.org/area:licensing
+
+## Project Maintenance — C4
+In the spirit of ZeroMQ, this project will do its best to adhere to the principles of C4. The exact protocol for C4 is described in its [specification][c4-spec]. This has a few consequences worth mentioning here:
+
+- Anyone who submits an accepted patch can become a maintainer.
+- We will only have a single branch on this repo, which we'll call "master".
+- No one, without exception, can merge their own patch. This will take effect one there's more than a single maintainer on the project.
+- All patches should solve exactly one issue, and that issue should have a clear statement of a real and current problem identified with the project.
+
+The C4 specification has more detailed information, and the [ZeroMQ Guide](zmq-guide) gives justifications for the process.
+
+[c4-spec]: https://rfc.zeromq.org/spec/42/
 [zmq-guide]: http://zguide.zeromq.org/page:all#Chapter-The-ZeroMQ-Community
