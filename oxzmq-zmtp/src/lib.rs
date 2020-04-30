@@ -4,11 +4,11 @@
 
 use crate::{
     frame::{Frame, FrameParseError, MessageFrame},
-    handshake::Handshake,
-    socket::SocketType,
+    handshake::{Handshake, HandshakeError},
+    socket::{SocketType, SocketTypeFromBytesError},
 };
-use futures::io::{self, AsyncRead, AsyncReadExt, AsyncWrite};
-use std::marker::Unpin;
+use futures::io::{self, AsyncBufRead, AsyncRead, AsyncReadExt, AsyncWrite};
+use std::{convert::TryFrom, marker::Unpin};
 
 mod frame;
 mod handshake;
@@ -16,7 +16,6 @@ mod socket;
 
 const PADDING_LEN: usize = 80;
 const FILLER_LEN: usize = 31;
-const GREETING_BUF_LEN: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct ZmtpSocket<S> {
@@ -25,14 +24,14 @@ pub struct ZmtpSocket<S> {
 }
 
 #[derive(Debug, Clone)]
-struct Connection<S> {
+pub struct Connection<S> {
     remote_version: Version,
     remote_socket_type: SocketType,
     multipart_buffer: Vec<MessageFrame>,
     stream: S,
 }
 
-impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
+impl<S: AsyncBufRead + AsyncRead + AsyncWrite + Unpin> Connection<S> {
     pub async fn new(
         mut stream: S,
         socket_type: &SocketType,
@@ -45,49 +44,64 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Connection<S> {
         let handshake = Handshake::perform(&mut stream, &greeting, &socket_type).await?;
 
         let remote_socket_type_bytes = match handshake {
-            Handshake::Null(null_handshake) => null_handshake.properties.get("socket-type"),
+            Handshake::Null(null_handshake) => {
+                null_handshake.properties.get(String::from("socket-type")).map(|slice| slice.to_vec())
+            }
         };
-        let remote_socket_type = SocketType::from(remote_socket_type_bytes);
+        let remote_socket_type_bytes =
+            remote_socket_type_bytes.ok_or(ConnectionError::MissingRemoteSocketType)?;
+        let remote_socket_type = SocketType::try_from(remote_socket_type_bytes.as_slice())?;
 
         // Check if the socket types are a valid combination.
-        if !socket_type.valid_socket_combo(remote_socket_type) {
+        if !socket_type.valid_socket_combo(&remote_socket_type) {
             let err_cmd = Frame::new_fatal_error("invalid socket combination");
             err_cmd.write_to(&mut stream).await?;
-            return Err(ConnectionError::InvalidSocketCombination((
-                socket_type,
+            return Err(ConnectionError::InvalidSocketCombination(
+                *socket_type,
                 remote_socket_type,
-            )));
+            ));
         }
 
         Ok(Self {
             remote_version,
             remote_socket_type,
+            multipart_buffer: Vec::new(),
             stream,
         })
     }
 
     pub async fn recv_frame(&mut self) -> Result<Frame, RecvFrameError> {
-        Ok(Frame::read_new(self.stream).await?)
+        Ok(Frame::read_new(&mut self.stream).await?)
     }
 }
 
 #[derive(thiserror::Error, Debug)]
-enum ConnectionError {
+pub enum ConnectionError {
     #[error("error reading data stream")]
     Io(#[from] io::Error),
 
     #[error("{0}")]
     Greeting(#[from] GreetingError),
 
-    #[error("invalid socket combination: {} with {}")]
-    InvalidSocketCombination((SocketType, SocketType)),
+    #[error("error in handshake")]
+    Handshake(#[from] HandshakeError),
+
+    #[error("invalid remote socket type")]
+    UnsupportedRemoteSocketType(#[from] SocketTypeFromBytesError),
+
+    #[error("invalid socket combination: {:?} with {:?}", .0, .1)]
+    InvalidSocketCombination(SocketType, SocketType),
+
+    #[error("remote peer must provide socket type")]
+    MissingRemoteSocketType,
 }
 
 #[derive(thiserror::Error, Debug)]
-enum RecvFrameError {
+pub enum RecvFrameError {
     #[error("error reading data stream")]
     Io(#[from] io::Error),
 
+    #[error("could not parse frame")]
     MalformedFrame(#[from] FrameParseError),
 }
 
@@ -175,7 +189,7 @@ impl Greeting {
 }
 
 #[derive(thiserror::Error, Debug)]
-enum GreetingError {
+pub enum GreetingError {
     #[error("error reading data stream")]
     Io(#[from] io::Error),
 
@@ -198,8 +212,11 @@ enum GreetingError {
     AsServer(u8),
 }
 
-#[derive(Debug, Clone)]
-struct Version {
+
+/// `Version` can be returned as part of an error in `GreetingError`. It
+/// might be helpful for downstream crates to use this information.
+#[derive(Debug, Clone, Copy)]
+pub struct Version {
     major: u8,
     minor: u8,
 }

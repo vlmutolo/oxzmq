@@ -6,8 +6,8 @@ use std::convert::TryFrom;
 
 const SUPPORTED_SOCKET_TYPES: [SocketType; 2] = [SocketType::Req, SocketType::Rep];
 
-#[derive(Clone, Debug)]
-pub(crate) enum SocketType {
+#[derive(Clone, Debug, Copy, PartialEq)]
+pub enum SocketType {
     Req,
     Rep,
     Dealer,
@@ -22,7 +22,7 @@ pub(crate) enum SocketType {
 }
 
 impl SocketType {
-    fn valid_socket_combo(&self, other: &SocketType) -> bool {
+    pub(crate) fn valid_socket_combo(&self, other: &SocketType) -> bool {
         match self {
             SocketType::Req => [SocketType::Rep, SocketType::Router].contains(other),
             SocketType::Rep => [SocketType::Req, SocketType::Dealer].contains(other),
@@ -43,36 +43,49 @@ impl SocketType {
     }
 }
 
-impl<B: AsRef<[u8]>> TryFrom<B> for SocketType {
-    type Error = SocketTypeFromStrError;
+impl TryFrom<&[u8]> for SocketType {
+    type Error = SocketTypeFromBytesError;
 
-    fn from(s: S) -> SocketType {
-        let socket_type = match s {
-            b"REQ" => SocketType::Req,
-            b"REP" => SocketType::Rep,
-            b"DEALER" => SocketType::Dealer,
-            b"ROUTER" => SocketType::Router,
-            b"PUB" => SocketType::Pub,
-            b"SUB" => SocketType::Sub,
-            b"XPUB" => SocketType::XPub,
-            b"XSUB" => SocketType::XSub,
-            b"PUSH" => SocketType::Push,
-            b"PULL" => SocketType::Pull,
-            b"PAIR" => SocketType::Pair,
-            b => return Err(SocketTypeFromStrError::Unknown(b.to_vec())),
+    fn try_from(bytes: &[u8]) -> Result<SocketType, SocketTypeFromBytesError> {
+        let socket_name = std::str::from_utf8(bytes)?;
+        let socket_type = match socket_name {
+            "REQ" => SocketType::Req,
+            "REP" => SocketType::Rep,
+            "DEALER" => SocketType::Dealer,
+            "ROUTER" => SocketType::Router,
+            "PUB" => SocketType::Pub,
+            "SUB" => SocketType::Sub,
+            "XPUB" => SocketType::XPub,
+            "XSUB" => SocketType::XSub,
+            "PUSH" => SocketType::Push,
+            "PULL" => SocketType::Pull,
+            "PAIR" => SocketType::Pair,
+            s => return Err(SocketTypeFromBytesError::Unknown(s.to_string())),
         };
 
-        if !SUPPORTED_SOCKET_TYPES.contains(socket_type) {
-            return Err(SocketTypeFromStrError::Unsupported(s.to_string()));
+        if !SUPPORTED_SOCKET_TYPES.contains(&socket_type) {
+            return Err(SocketTypeFromBytesError::Unsupported(socket_name.to_string()));
         }
 
-        socket_type
+        Ok(socket_type)
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum SocketTypeFromBytesError {
+    #[error("unknown socket type: {0}")]
+    Unknown(String),
+
+    #[error("known-but-unsupported socket type: {0}")]
+    Unsupported(String),
+
+    #[error("socket bytes were invalid utf8")]
+    NotUtf8(#[from] std::str::Utf8Error),
+}
+
 impl From<&SocketType> for &'static str {
-    fn from(socket: SocketType) -> &'static str {
-        match s {
+    fn from(socket: &SocketType) -> &'static str {
+        match socket {
             SocketType::Req => "REQ",
             SocketType::Rep => "REP",
             SocketType::Dealer => "DEALER",
@@ -89,16 +102,7 @@ impl From<&SocketType> for &'static str {
 }
 
 impl From<&SocketType> for String {
-    fn from(socket: SocketType) -> String {
+    fn from(socket_type: &SocketType) -> String {
         <&str>::from(socket_type).to_string()
     }
-}
-
-#[derive(thiserror::Error, Debug)]
-enum SocketTypeFromStrError {
-    #[error("unknown socket type: {0}")]
-    Unknown(String),
-
-    #[error("unsupported socket type: {0}")]
-    Unsupported(String),
 }

@@ -3,41 +3,41 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 use crate::{
-    frame::{Frame, FrameCont, FrameKind},
     handshake::null::{NullHandshake, NullHandshakeError},
-    Mechanism,
+    socket::SocketType,
+    Greeting, Mechanism,
 };
-use futures::io;
-use std::collections::HashMap;
+use futures::io::{self, AsyncBufRead, AsyncRead, AsyncWrite};
+use std::{collections::HashMap, convert::TryFrom};
 
 mod null;
 
 #[derive(Debug, Clone)]
-enum Handshake {
+pub(crate) enum Handshake {
     Null(NullHandshake),
 }
 
 impl Handshake {
-    async fn perform(
+    pub(crate) async fn perform<S>(
         stream: &mut S,
         greeting: &Greeting,
         socket_type: &SocketType,
     ) -> Result<Handshake, HandshakeError>
     where
-        S: AsyncWrite + AsyncRead + Unpin,
+        S: AsyncWrite + AsyncRead + AsyncBufRead + Unpin,
     {
         match greeting.mechanism {
-            Mechanism::Null(null_handshake) => {
-                Handshake::Null(NullHandshake::perform(stream, mechanism, socket_type).await?)
-            }
+            Mechanism::Null => Ok(Handshake::Null(
+                NullHandshake::perform(stream, socket_type).await?,
+            )),
         }
     }
 }
 
 #[derive(thiserror::Error, Debug)]
-enum HandshakeError {
+pub enum HandshakeError {
     #[error("error in handshake with NULL mechanism")]
-    Null(NullHandshakeError),
+    Null(#[from] NullHandshakeError),
 }
 
 #[derive(Debug, Clone)]
@@ -58,60 +58,62 @@ impl Properties {
 
         let mut rest = bytes;
         while rest.len() > 0 {
-            let name_size = rest[0];
+            let name_size = *rest.get(0).ok_or(PropertiesParseError::EmptySlice)? as usize;
             if name_size == 0 {
                 return Err(PropertiesParseError::ZeroSizedName);
             }
-            rest = rest[1..];
+            rest = &rest[1..];
             if rest.len() < name_size as usize {
                 return Err(PropertiesParseError::NameSizeIncorrect);
             }
 
-            let name = std::str::from_utf8(rest[..name_size])
+            let name = std::str::from_utf8(&rest[..name_size])
                 .map_err(|_| PropertiesParseError::NameInvalidChar)?;
             if !name
                 .chars()
-                .all(|c| c.is_alphanumeric() && ['-', '_', '.', '+'].contains(c))
+                .all(|c| c.is_alphanumeric() && ['-', '_', '.', '+'].contains(&c))
             {
                 return Err(PropertiesParseError::NameInvalidChar);
             }
-            rest = rest[name_size..];
+            rest = &rest[name_size..];
 
-            let value_size_bytes = <[u8; 4]>::try_from(rest[..4])
-                .map_err(|e| PropertiesParseError::ValueSizeIncomplete)?;
-            let value_size = u32::from_be_bytes(value_size_bytes);
-            rest = rest[4..];
+            let value_size_bytes = <[u8; 4]>::try_from(&rest[..4])
+                .map_err(|_| PropertiesParseError::ValueSizeIncomplete)?;
+            let value_size = u32::from_be_bytes(value_size_bytes) as usize;
+            rest = &rest[4..];
             if rest.len() < value_size as usize {
                 return Err(PropertiesParseError::ValueSizeIncorrect);
             }
-            let value_bytes = rest[..value_size];
+            let value_bytes = &rest[..value_size];
 
             map.insert(name.to_lowercase(), value_bytes.to_vec());
         }
 
-        Ok(Properties { map })
+        Ok(Properties { inner: map })
     }
 
-    async fn write_to<W: AsyncWrite>(&self, stream: &mut W) -> Result<(), io::Error> {
+    async fn write_to<W: AsyncWrite + Unpin>(&self, stream: &mut W) -> Result<(), io::Error> {
         let mut write_buf = Vec::<u8>::new();
 
         for (name, value) in self.inner.iter() {
             let name_size_bytes = name.len().to_be_bytes();
-            write_buf.extend_from_slice(name_size_bytes);
+            write_buf.extend_from_slice(&name_size_bytes);
             write_buf.extend_from_slice(name.as_bytes());
 
             let value_size_bytes = value.len().to_be_bytes();
-            write_buf.extend_from_slice(value_size_bytes);
-            write_buf.extend_from_slice(value.as_bytes());
+            write_buf.extend_from_slice(&value_size_bytes);
+            write_buf.extend_from_slice(value.as_slice());
         }
 
-        io::copy(write_buf, stream).await?;
+        io::copy(write_buf.as_slice(), stream).await?;
+
+        Ok(())
     }
 
     // We `get` keys through a method because we have to ensure that we treat
     // all keys as lowercase.
-    fn get(&self, key: String) -> Option<Vec<u8>> {
-        self.inner.get(key.to_lowercase())
+    pub(crate) fn get(&self, key: String) -> Option<&[u8]> {
+        self.inner.get(&key.to_lowercase()).map(|v| v.as_slice())
     }
 
     // We `insert` keys through a method because we have to ensure that we treat
@@ -122,7 +124,10 @@ impl Properties {
 }
 
 #[derive(thiserror::Error, Debug)]
-enum PropertiesParseError {
+pub enum PropertiesParseError {
+    #[error("given slice was empty")]
+    EmptySlice,
+
     #[error("name had size of zero")]
     ZeroSizedName,
 
