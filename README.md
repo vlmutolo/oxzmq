@@ -1,3 +1,7 @@
+# IMPORTANT
+
+[Development](https://git.sr.ht/~vlmutolo/oxzmq) and [tracker](https://todo.sr.ht/~vlmutolo/oxzmq) moved to [SourceHut](https://sourcehut.org)
+
 # OxZMQ (`oxzmq`)
 
 OxZMQ is an implementation of [ZeroMQ][zmq] in pure Rust. Its high-level goals are as follows, ordered by priority.
